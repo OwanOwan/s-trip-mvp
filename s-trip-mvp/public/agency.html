@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>S Trip – Agency (test)</title>
+<style>body{font:14px system-ui;margin:16px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #ddd;padding:6px;text-align:left;vertical-align:top}button,select{margin:2px}</style></head><body>
+<h2>Agency dashboard (test)</h2><p>Token: <input id="tok" type="password"> <button id="ok">Load</button> <button id="csv">Export CSV</button> <span id="msg"></span></p>
+<label>Show <select id="f"><option value="">all</option><option value="queue">moderation queue</option><option value="new">new</option><option value="acknowledged">acknowledged</option><option value="dispatched">dispatched</option><option value="resolved">resolved</option></select></label>
+<table><thead><tr><th>Time</th><th>Type [tier]</th><th>Sev</th><th>Where</th><th>Status</th><th>Work</th><th>Votes</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+const $=id=>document.getElementById(id);let tok=sessionStorage.t||'',D=[];$('tok').value=tok;
+const api=(p,o={})=>fetch('/api/agency/'+p,{...o,headers:{'x-token':tok,'content-type':'application/json'}});
+async function load(){const r=await api('incidents');if(!r.ok){$('msg').textContent='Wrong token';return}$('msg').textContent='';D=await r.json();draw()}
+function draw(){const f=$('f').value,tb=$('rows');tb.innerHTML='';
+ D.filter(i=>!f||(f==='queue'?['unverified','flagged','disputed'].includes(i.status):i.work===f)).forEach(i=>{const tr=tb.insertRow();
+  [new Date(i.created).toLocaleString(),i.type.replace(/_/g,' ')+' ['+i.tier+']',i.severity,i.lat.toFixed(4)+', '+i.lng.toFixed(4),i.status+' ('+i.confidence.toFixed(2)+')',i.work,'+'+i.confirms+' / -'+i.disputes+' / flags '+i.flags].forEach(v=>tr.insertCell().textContent=v);
+  tr.cells[1].title=i.desc+(i.notes.length?' | Notes: '+i.notes.map(n=>n.text).join('; '):'');const c=tr.insertCell(),s=document.createElement('select');
+  ['new','acknowledged','dispatched','resolved'].forEach(w=>s.add(new Option(w,w,false,w===i.work)));s.onchange=()=>act(i.id,{work:s.value});c.append(s);
+  [['verify','Verify'],['hide','Hide'],['restore','Restore'],['note','Note']].forEach(([a,t])=>{const b=document.createElement('button');b.textContent=t;
+   b.onclick=()=>{if(a==='note'){const x=prompt('Note');if(x)act(i.id,{note:x})}else act(i.id,{action:a})};c.append(b)})})}
+async function act(id,b){await api('incidents/'+id,{method:'POST',body:JSON.stringify(b)});load()}
+$('ok').onclick=()=>{tok=$('tok').value;sessionStorage.t=tok;load();new EventSource('/api/agency/stream?token='+encodeURIComponent(tok)).addEventListener('incident',load)};
+$('f').onchange=draw;$('csv').onclick=async()=>{const r=await api('export.csv'),a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download='incidents.csv';a.click()};
+if(tok)$('ok').click();
+</script></body></html>

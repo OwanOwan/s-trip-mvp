@@ -1,0 +1,61 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>S Trip – Safety Map (test)</title>
+<style>*{box-sizing:border-box}body{margin:0;font:14px system-ui;display:flex;height:100vh;flex-direction:column}
+header{padding:8px 12px;background:#12263a;color:#fff;display:flex;gap:10px;align-items:center;flex-wrap:wrap}header a{color:#ffcc80}
+button{font:inherit;padding:6px 10px;border:0;border-radius:6px;background:#1976d2;color:#fff;cursor:pointer}button.s{background:#546e7a}
+main{flex:1;display:flex;min-height:0}#map{flex:1;background:#eceff1}aside{width:340px;overflow:auto;border-left:1px solid #ccc;padding:8px}
+.i{border:1px solid #ddd;border-radius:8px;padding:8px;margin-bottom:8px;cursor:pointer}.i b{text-transform:capitalize}
+#toast{position:fixed;top:60px;right:12px;display:grid;gap:6px;z-index:9}#toast div{background:#c62828;color:#fff;padding:10px;border-radius:8px;max-width:300px}
+dialog{border:0;border-radius:10px;padding:16px;width:320px}label{display:block;margin:6px 0}input,select,textarea{width:100%}
+@media(max-width:700px){main{flex-direction:column}aside{width:auto;height:40%}}</style></head><body>
+<header><b>S Trip</b><button id="rep">Report incident</button><button id="watch" class="s">Watch this area</button>
+<label style="margin:0"><input id="hs" type="checkbox" checked style="width:auto"> Hotspots</label>
+<select id="hr" style="width:auto"></select><a href="tel:122">Call FRSC 122</a><span id="demo" hidden>⚠ Demo data included</span></header>
+<main><div id="map"></div><aside><small>Test product. Reports are unverified community information, not an official warning. In an emergency call 122 or your local emergency line.</small><div id="list"></div></aside></main>
+<div id="toast"></div>
+<dialog id="dlg"><form><b>Report incident</b><label>Type<select id="type"></select></label><label>Severity (1–5)<input id="sev" type="number" min="1" max="5" value="3"></label>
+<label>Details (optional, no names or phone numbers)<textarea id="desc" maxlength="280"></textarea></label><button type="button" class="s" id="loc">Use my location</button>
+<p><small>Or tap the map to drop a pin first.</small></p><button id="go">Send</button> <button type="button" class="s" onclick="dlg.close()">Cancel</button></form></dialog>
+<script>
+const cid=localStorage.cid||(localStorage.cid=crypto.randomUUID()),H={'content-type':'application/json','x-cid':cid},$=id=>document.getElementById(id);
+const inc=new Map(),COL={1:'#4caf50',2:'#8bc34a',3:'#ffb300',4:'#fb8c00',5:'#d32f2f'},LV={low:'#2e7d32',medium:'#f9a825',high:'#c62828'},label=t=>t.replace(/_/g,' ');
+let map,AME,pin,pinM,marks={},over=[],cfg;
+const toast=t=>{const d=document.createElement('div');d.textContent=t;$('toast').append(d);setTimeout(()=>d.remove(),12000)};
+$('hr').innerHTML='<option value="">Any time of day</option>'+[...Array(24).keys()].map(h=>`<option value="${h}">Risk at ${String(h).padStart(2,'0')}:00</option>`).join('');
+async function init(){cfg=await(await fetch('/api/config')).json();$('demo').hidden=!cfg.demo;
+ $('type').innerHTML=cfg.types.map(t=>`<option value="${t}">${label(t)}</option>`).join('');
+ (await(await fetch('/api/incidents')).json()).forEach(i=>inc.set(i.id,i));render();
+ if(cfg.key){const s=document.createElement('script');s.src=`https://maps.googleapis.com/maps/api/js?key=${cfg.key}&callback=gmap&loading=async&libraries=marker`;document.head.append(s)}
+ else $('map').textContent='Set GOOGLE_MAPS_API_KEY to show the map. The incident list, reporting and alerts still work.';
+ stream();retryQueue()}
+window.gmap=async()=>{({AdvancedMarkerElement:AME}=await google.maps.importLibrary('marker'));$('map').textContent='';
+ map=new google.maps.Map($('map'),{center:{lat:7.9,lng:7.1},zoom:7,mapId:'DEMO_MAP_ID',streetViewControl:false});
+ map.addListener('click',e=>{pin={lat:e.latLng.lat(),lng:e.latLng.lng()};if(pinM)pinM.map=null;pinM=new AME({map,position:pin})});render();hot()};
+function render(){const l=[...inc.values()].filter(i=>i.expires>Date.now()).sort((a,b)=>b.created-a.created);$('list').innerHTML='';
+ l.forEach(i=>{const d=document.createElement('div');d.className='i';
+  d.innerHTML='<b></b> · sev '+i.severity+' · <small></small><p></p><button data-v="confirm">Confirm</button> <button class="s" data-v="dispute">Not there</button> <button class="s" data-v="flag">Flag</button>';
+  d.querySelector('b').textContent=label(i.type);d.querySelector('small').textContent=i.status+(i.approx?' · approx. location':'')+(i.synthetic?' · demo':'');d.querySelector('p').textContent=i.desc||'';
+  d.querySelectorAll('button').forEach(b=>b.onclick=()=>vote(i.id,b.dataset.v));d.onclick=e=>{if(e.target.tagName!=='BUTTON'&&map)map.panTo({lat:i.lat,lng:i.lng})};$('list').append(d)});
+ if(!map)return;for(const k of Object.keys(marks))if(!inc.has(k)||inc.get(k).expires<Date.now()){marks[k].map=null;delete marks[k]}
+ l.forEach(i=>{if(marks[i.id])return;const e=document.createElement('div');e.style.cssText=`width:18px;height:18px;border-radius:50%;border:2px solid #fff;background:${COL[i.severity]};box-shadow:0 0 3px #000`;e.title=label(i.type);marks[i.id]=new AME({map,position:{lat:i.lat,lng:i.lng},content:e})})}
+async function vote(id,v){const r=await fetch(`/api/incidents/${id}/vote`,{method:'POST',headers:H,body:JSON.stringify({v})}),d=await r.json();if(!r.ok)return toast(d.error||'Failed');if(d.id)inc.set(d.id,d);render()}
+const Q=()=>JSON.parse(localStorage.q||'[]');
+async function send(b){try{const r=await fetch('/api/incidents',{method:'POST',headers:H,body:JSON.stringify(b)});if(r.status>=400&&r.status<500){toast((await r.json()).error);return true}return r.ok}catch{return false}}
+async function retryQueue(){const q=Q(),rest=[];for(const b of q)if(!(await send(b)))rest.push(b);localStorage.q=JSON.stringify(rest);if(q.length&&!rest.length)toast('Queued reports sent')}
+addEventListener('online',retryQueue);
+$('rep').onclick=()=>$('dlg').showModal();
+$('loc').onclick=()=>navigator.geolocation.getCurrentPosition(p=>{pin={lat:p.coords.latitude,lng:p.coords.longitude};if(map)map.panTo(pin);toast('Location set')},()=>toast('Location unavailable'));
+$('go').onclick=async e=>{e.preventDefault();if(!pin)return toast('Tap the map or use my location first');
+ const b={type:$('type').value,severity:$('sev').value,desc:$('desc').value,...pin};$('dlg').close();
+ if(await send(b))toast('Report sent');else{localStorage.q=JSON.stringify([...Q(),b]);toast('No signal: report saved and will send automatically')}};
+$('watch').onclick=async()=>{const c=map&&map.getCenter(),p=pin||(c&&{lat:c.lat(),lng:c.lng()});if(!p)return toast('Set a location first');
+ if(window.Notification)Notification.requestPermission();const r=await fetch('/api/watch',{method:'PUT',headers:H,body:JSON.stringify({...p,radius:10,minSev:3})});toast(r.ok?'Watching 10 km around this point for severity 3+':'Could not set watch')};
+function stream(){const es=new EventSource('/api/stream?cid='+cid);
+ es.addEventListener('incident',e=>{const i=JSON.parse(e.data);inc.set(i.id,i);render();hot()});
+ es.addEventListener('remove',e=>{inc.delete(JSON.parse(e.data).id);render();hot()});
+ es.addEventListener('alert',e=>{const i=JSON.parse(e.data),t=`Alert: ${label(i.type)} (severity ${i.severity}) in your watch area`;toast(t);if(window.Notification&&Notification.permission==='granted')new Notification('S Trip',{body:t})})}
+let tm;function hot(){clearTimeout(tm);tm=setTimeout(async()=>{if(!map)return;over.forEach(o=>o.setMap(null));over=[];if(!$('hs').checked)return;
+ const h=$('hr').value,d=await(await fetch('/api/hotspots'+(h===''?'':'?hour='+h))).json();
+ d.cells.forEach(c=>over.push(new google.maps.Rectangle({map,bounds:{south:c.s[0],west:c.s[1],north:c.n[0],east:c.n[1]},fillColor:LV[c.level],fillOpacity:.35,strokeWeight:0,clickable:false})));
+ d.segments.forEach(s=>over.push(new google.maps.Polyline({map,path:[{lat:s.from[0],lng:s.from[1]},{lat:s.to[0],lng:s.to[1]}],strokeColor:LV[s.level],strokeWeight:6,strokeOpacity:.9})))},250)}
+$('hs').onchange=$('hr').onchange=hot;init();
+</script></body></html>
